@@ -1,16 +1,13 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../config/db");
-
-// Create user (simple: just email)
 router.post("/", async (req, res) => {
   const { email } = req.body;
 
   if (!email) return res.status(400).json({ ok: false, error: "email is required" });
 
   try {
-    // upsert style: insert or return existing
-    const result = await pool.query(
+        const result = await pool.query(
       `INSERT INTO users (email)
        VALUES ($1)
        ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
@@ -24,8 +21,6 @@ router.post("/", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
-
-// Get user by email
 router.get("/", async (req, res) => {
   const { email } = req.query;
   if (!email) return res.status(400).json({ ok: false, error: "email query param required" });

@@ -1,29 +1,28 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../config/db");
-const auth = require("../middleware/auth");
+const {verifyToken} = require("../middleware/auth");
 const oAuth2Client = require("../config/googleClient");
 
-// 1) Generate URL
-router.get("/connect", auth, async (req, res) => {
+
+router.get("/connect", verifyToken, async (req, res) => {
   const scopes = [
     "https://www.googleapis.com/auth/gmail.readonly"
   ];
 
   const url = oAuth2Client.generateAuthUrl({
-    access_type: "offline",      // needed for refresh_token
-    prompt: "consent",           // forces refresh_token first time
+    access_type: "offline",      
+    prompt: "consent",           
     scope: scopes,
-    state: String(req.user.userId), // pass userId through callback
+    state: String(req.user.userId), 
   });
 
   res.json({ ok: true, url });
 });
 
-// 2) OAuth callback
 router.get("/callback", async (req, res) => {
   const code = req.query.code;
-  const userId = req.query.state; // we passed userId in state
+  const userId = req.query.state; 
 
   if (!code || !userId) {
     return res.status(400).send("Missing code or state");
@@ -47,7 +46,7 @@ router.get("/callback", async (req, res) => {
       ]
     );
 
-    res.send("✅ Gmail connected successfully. You can close this tab.");
+    res.send("Gmail connected successfully. You can close this tab.");
   } catch (err) {
     console.error(err);
     res.status(500).send("OAuth failed: " + err.message);

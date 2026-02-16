@@ -1,19 +1,18 @@
 const express = require("express");
 const router = express.Router();
-const auth = require("../middleware/auth");
+const {verifyToken} = require("../middleware/auth");
 const pool = require("../config/db");
 const { getAuthorizedGmailClient } = require("../services/gmailService");
 const { parseJobFromEmail } = require("../utils/emailParser");
 
-// Fetch recent emails and store jobs
-router.post("/sync", auth, async (req, res) => {
+// Fetch recent emails and store the jobs
+router.post("/sync", verifyToken, async (req, res) => {
   const userId = req.user.userId;
   const maxResults = req.body.maxResults || 10;
 
   try {
     const gmail = await getAuthorizedGmailClient(userId);
 
-    // Search for application emails
     const query = "newer_than:30d (\"thank you for applying\" OR \"application received\" OR \"we received your application\")";
 
     const listRes = await gmail.users.messages.list({
@@ -41,8 +40,6 @@ router.post("/sync", auth, async (req, res) => {
       const parsed = parseJobFromEmail({ subject, snippet });
       if (!parsed) continue;
 
-      // insert job if not duplicate (simple de-dupe)
-      // You can improve later using email messageId stored in db
       await pool.query(
         `INSERT INTO jobs (user_id, company, role, status)
          VALUES ($1, $2, $3, 'Applied')`,

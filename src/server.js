@@ -9,24 +9,29 @@ const authRoute = require("./routes/auth");
 const pool = require("./config/db");
 const googleRoute = require("./routes/google");
 const gmailRoute = require("./routes/gmail");
-
+const syncRoute = require("./routes/sync");
+const syncRunsRoute = require("./routes/sync-runs");
 const app = express();
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
 
-
-// Middleware (must come before routes)
-app.use(cors());
 app.use(express.json());
 
-// Routes
-app.use("/gmail", gmailRoute);
 
+// Routes
+app.use("/sync-runs", syncRunsRoute);
+app.use("/gmail", gmailRoute);
+app.use("/sync", syncRoute);
 app.use("/google", googleRoute);
 app.use("/auth", authRoute);
 app.use("/health", healthRoute);
 app.use("/users", usersRoute);
 app.use("/jobs", jobsRoute);
 
-// DB test route (keep this)
 app.get("/test-db", async (req, res) => {
   try {
     const result = await pool.query("SELECT NOW() as now");
@@ -37,13 +42,11 @@ app.get("/test-db", async (req, res) => {
   }
 });
 
-// Root route
 app.get("/", (req, res) => {
   res.send("Job Tracker Backend is running");
 });
 
-// Start server
 const PORT = process.env.PORT || 5050;
 app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
 });

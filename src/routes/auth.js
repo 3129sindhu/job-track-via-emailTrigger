@@ -8,7 +8,6 @@ router.post("/login", async (req, res) => {
   if (!email) return res.status(400).json({ ok: false, error: "email is required" });
 
   try {
-    // create or fetch user
     const result = await pool.query(
       `INSERT INTO users (email)
        VALUES ($1)
@@ -18,14 +17,11 @@ router.post("/login", async (req, res) => {
     );
 
     const user = result.rows[0];
-
-    // issue JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
-
     res.json({ ok: true, token, user });
   } catch (err) {
     console.error(err);
