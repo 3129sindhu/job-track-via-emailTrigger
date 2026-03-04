@@ -17,6 +17,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionMsg, setActionMsg] = useState("");
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total]);
 
@@ -46,6 +48,40 @@ export default function Dashboard() {
     }
   }
 
+  async function connectGmail() {
+    setActionLoading(true);
+    setActionMsg("Opening Google consent...");
+    setMsg("");
+    try {
+      const res = await api.get("/google/connect");
+      const url = res.data?.url;
+      if (!url) throw new Error("No OAuth URL returned from backend");
+      window.location.href = url;
+    } catch (e) {
+      setActionMsg("");
+      setMsg(e.response?.data?.error || e.message);
+      setActionLoading(false);
+    }
+  }
+
+  async function syncNow() {
+    setActionLoading(true);
+    setActionMsg("Syncing Gmail...");
+    setMsg("");
+    try {
+      await api.post("/sync/gmail", {});
+      setActionMsg("Sync complete Refreshing jobs...");
+      setPage(1);
+      await fetchJobs(1);
+      setActionMsg("Sync complete");
+    } catch (e) {
+      setActionMsg("");
+      setMsg(e.response?.data?.error || e.message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   function applyFilters() {
     setPage(1);
     fetchJobs(1);
@@ -58,16 +94,23 @@ export default function Dashboard() {
     setPage(1);
     setTimeout(() => fetchJobs(1), 0);
   }
+
   useEffect(() => {
     fetchJobs(1);
 
-    // Auto refresh every 60s
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("gmail") === "connected") {
+      syncNow();
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
     const interval = setInterval(() => {
       fetchJobs(page);
     }, 60000);
 
     return () => clearInterval(interval);
   }, []);
+
   useEffect(() => {
     fetchJobs(page);
   }, [page]);
@@ -81,13 +124,20 @@ export default function Dashboard() {
       fontFamily:
         "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial",
     },
-    container: { maxWidth: 1100, margin: "0 auto" },
+
+    container: {
+      width: "100%",
+      maxWidth: 1500, 
+      margin: "0 auto",
+    },
+
     headerRow: {
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
       gap: 12,
       marginBottom: 16,
+      flexWrap: "wrap",
     },
     title: { fontSize: 26, margin: 0, fontWeight: 700 },
     sub: { fontSize: 13, color: "#9fb0c3" },
@@ -161,7 +211,7 @@ export default function Dashboard() {
     table: {
       width: "100%",
       borderCollapse: "collapse",
-      minWidth: 800,
+      minWidth: 900,
     },
     th: {
       textAlign: "left",
@@ -188,6 +238,7 @@ export default function Dashboard() {
       background: "#0b0f14",
       color: "#cfe0f5",
       fontSize: 12,
+      whiteSpace: "nowrap",
     },
 
     paginationRow: {
@@ -206,6 +257,21 @@ export default function Dashboard() {
     },
   };
 
+  const renderSource = (src) => {
+    if (!src) return "-";
+    const s = String(src).toLowerCase();
+    if (s === "llm") return "LLM";
+    if (s === "ml") return "ML";
+    return s.toUpperCase();
+  };
+
+  const renderConfidence = (c) => {
+    if (c == null) return "-";
+    const n = Number(c);
+    if (Number.isNaN(n)) return "-";
+    return `${Math.round(n * 100)}%`;
+  };
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
@@ -220,11 +286,21 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div style={styles.badge}>
-            <span>📌</span>
-            <span>
-              Total jobs: <b>{total}</b>
-            </span>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={styles.badge}>
+              <span>📌</span>
+              <span>
+                Total jobs: <b>{total}</b>
+              </span>
+            </div>
+
+            <button style={styles.btnGhost} onClick={connectGmail} disabled={actionLoading}>
+              Connect Gmail
+            </button>
+
+            <button style={styles.btn} onClick={syncNow} disabled={actionLoading}>
+              Sync Now
+            </button>
           </div>
         </div>
 
@@ -263,6 +339,7 @@ export default function Dashboard() {
           </div>
 
           {msg ? <div style={styles.message}>{msg}</div> : null}
+          {actionMsg ? <div style={styles.message}>{actionMsg}</div> : null}
           {loading ? <div style={{ marginTop: 12, color: "#9fb0c3" }}>Loading jobs…</div> : null}
 
           <div style={styles.tableWrap}>
@@ -273,15 +350,15 @@ export default function Dashboard() {
                   <th style={styles.th}>Role</th>
                   <th style={styles.th}>Status</th>
                   <th style={styles.th}>Applied</th>
-                  <th style={styles.th}>Detected</th>
+                  <th style={styles.th}>Source</th>
                   <th style={styles.th}>Confidence</th>
-                  <th style={styles.th}>Why</th>
                 </tr>
               </thead>
+
               <tbody>
                 {jobs.length === 0 && !loading ? (
                   <tr>
-                    <td style={styles.td} colSpan={7}>
+                    <td style={styles.td} colSpan={6}>
                       No jobs found. Try changing filters.
                     </td>
                   </tr>
@@ -291,6 +368,7 @@ export default function Dashboard() {
                   <tr key={j.id}>
                     <td style={styles.td}>{j.company || "-"}</td>
                     <td style={styles.td}>{j.role || "-"}</td>
+
                     <td style={styles.td}>
                       <select
                         style={styles.select}
@@ -304,16 +382,14 @@ export default function Dashboard() {
                         ))}
                       </select>
                     </td>
+
                     <td style={styles.td}>
                       {j.applied_date ? new Date(j.applied_date).toLocaleDateString() : "-"}
                     </td>
-                    <td style={styles.td}>{j.ml_event_type || "-"}</td>
-<td style={styles.td}>
-  {j.ml_confidence != null ? `${Math.round(Number(j.ml_confidence) * 100)}%` : "-"}
-</td>
-<td style={styles.td} title={j.ml_reason || ""}>
-  {j.ml_reason ? "hover" : "-"}
-</td>
+
+                    <td style={styles.td}>{renderSource(j.extraction_source)}</td>
+
+                    <td style={styles.td}>{renderConfidence(j.classification_confidence)}</td>
                   </tr>
                 ))}
               </tbody>

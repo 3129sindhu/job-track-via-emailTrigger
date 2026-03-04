@@ -51,7 +51,7 @@ async function syncGmailForUser(userId) {
     const authClient = await getAuthedClientForUser(user);
     const gmail = google.gmail({ version: "v1", auth: authClient });
     const q =
-      'newer_than:50d (interview OR "thank you for applying" OR "application received" OR assessment OR "coding test" OR offer OR rejected OR recruiter OR hiring OR careers OR "application status")';
+      'newer_than:10d (interview OR "thank you for applying" OR "application received" OR assessment OR "coding test" OR offer OR rejected OR recruiter OR hiring OR careers OR "application status")';
 
     const list = await gmail.users.messages.list({
       userId: "me",
@@ -61,14 +61,31 @@ async function syncGmailForUser(userId) {
 
     const messages = list.data.messages || [];
 
-    for (const m of messages) {
-      const messageId = m.id;
+// fetch internalDate for sorting (metadata is lighter than full)
+const msgMeta = [];
+for (const m of messages) {
+  const meta = await gmail.users.messages.get({
+    userId: "me",
+    id: m.id,
+    format: "metadata",
+    metadataHeaders: ["Subject", "From", "Date"],
+  });
+  msgMeta.push({
+    id: m.id,
+    internalDate: Number(meta.data.internalDate || 0),
+  });
+}
+msgMeta.sort((a, b) => a.internalDate - b.internalDate);
+//sorts from old to new 
+for (const item of msgMeta) {
+  const messageId = item.id;
 
-      const msg = await gmail.users.messages.get({
-        userId: "me",
-        id: messageId,
-        format: "full",
-      });
+  const msg = await gmail.users.messages.get({
+    userId: "me",
+    id: messageId,
+    format: "full",
+  });
+
 
       const payload = msg.data.payload || {};
       const headers = payload.headers || [];
@@ -118,8 +135,6 @@ async function syncGmailForUser(userId) {
         skipped++;
         continue;
       }
-
-      
       let ml;
       try {
         ml = await classifyEmailML({
@@ -128,21 +143,23 @@ async function syncGmailForUser(userId) {
           body: plainText || "",
         });
       } catch (e) {
-        await pool.query(
-          `UPDATE gmail_messages
-           SET ml_reason=$1, ml_model_version=$2
-           WHERE user_id=$3 AND gmail_message_id=$4`,
-          [
-            `ML_ERROR: ${e.message}`,
-            process.env.ML_MODEL_VERSION || null,
-            userId,
-            messageId,
-          ]
-        );
-        skipped++;
-        continue;
-      }
-
+  const details =
+    e?.response?.data ? JSON.stringify(e.response.data) : (e?.message || String(e));
+  await pool.query(
+    `UPDATE gmail_messages
+     SET ml_reason=$1, ml_model_version=$2
+     WHERE user_id=$3 AND gmail_message_id=$4`,
+    [
+      `ML_ERROR: ${details}`,
+      process.env.ML_MODEL_VERSION || null,
+      userId,
+      messageId,
+    ]
+  );
+  console.error("ML classify failed:", details);
+  skipped++;
+  continue;
+}
       await pool.query(
         `UPDATE gmail_messages
          SET ml_event_type=$1,
@@ -187,7 +204,6 @@ async function syncGmailForUser(userId) {
         enableLLM &&
         ml.is_job_related &&
         (Number(ml.confidence || 0) < threshold || companyUnknown || roleUnknown);
-
       if (shouldUseLLM) {
         try {
           const llmRes = await extractJobFieldsLLM({
@@ -229,8 +245,6 @@ async function syncGmailForUser(userId) {
           );
         }
       }
-
-      // Safety net: if both unknown after everything, skip
       const companyUnknownFinal =
         !finalCompany || finalCompany.toLowerCase().trim() === "unknown";
       const roleUnknownFinal =
@@ -239,22 +253,65 @@ async function syncGmailForUser(userId) {
         skipped++;
         continue;
       }
-      await pool.query(
-        `INSERT INTO jobs
-          (user_id, company, role, applied_date, status, gmail_message_id, classification_confidence, extraction_source)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT (user_id, company, role, applied_date) DO NOTHING`,
-        [
-          userId,
-          finalCompany,
-          finalRole,
-          receivedAt,
-          status,
-          messageId,
-          ml.confidence ?? null,
-          extractionSource,
-        ]
-      );
+
+      function norm(s) {
+  return String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+const companyClean = (finalCompany || "").trim();
+const roleClean = (finalRole || "").trim();
+const companyNorm = norm(companyClean);
+const roleNorm = norm(roleClean);
+
+if (!companyClean || companyNorm === "unknown company") {
+  skipped++;
+  continue;
+}
+
+await pool.query(
+  `
+  INSERT INTO jobs
+    (user_id, company, role, company_norm, role_norm, applied_date, status, last_email_at,
+     gmail_message_id, classification_confidence, extraction_source)
+  VALUES
+    ($1,$2,$3,$4,$5,$6,$7,$8,
+     $9,$10,$11)
+  ON CONFLICT (user_id, company_norm, role_norm)
+  DO UPDATE SET
+    -- keep earliest applied date
+    applied_date = LEAST(jobs.applied_date, EXCLUDED.applied_date),
+
+    -- update status only if this email is newer
+    status = CASE
+      WHEN EXCLUDED.last_email_at >= COALESCE(jobs.last_email_at, jobs.applied_date)
+      THEN EXCLUDED.status
+      ELSE jobs.status
+    END,
+
+    last_email_at = GREATEST(
+      COALESCE(jobs.last_email_at, jobs.applied_date),
+      EXCLUDED.last_email_at
+    ),
+
+    gmail_message_id = EXCLUDED.gmail_message_id,
+    classification_confidence = EXCLUDED.classification_confidence,
+    extraction_source = EXCLUDED.extraction_source
+  RETURNING *
+  `,
+  [
+    userId,
+    companyClean,
+    roleClean || null,
+    companyNorm,
+    roleNorm || null,
+    receivedAt,                 
+    status || "Applied",         
+    receivedAt,
+    messageId,
+    ml.confidence ?? null,
+    extractionSource,
+  ]
+);
 
       added++;
     }

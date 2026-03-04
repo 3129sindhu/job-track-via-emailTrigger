@@ -14,13 +14,60 @@ router.post("/", verifyToken, async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `INSERT INTO jobs (user_id, company, role, applied_date, status)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [userId, company, role, appliedDate || null, status || "Applied"]
-    );
-    res.json({ ok: true, job: result.rows[0] });
+    function norm(s) {
+  return String(s || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+const companyClean = (company || "").trim();
+const roleClean = (role || "").trim();
+
+const companyNorm = norm(companyClean);
+const roleNorm = norm(roleClean);
+
+if (!companyClean || companyNorm === "unknown company") {
+  console.log("Skipping insert: company unknown", { subject, from });
+  return res.json({ ok: true, skipped: true, reason: "company unknown" });
+}
+
+const inserted = await pool.query(
+  `
+  INSERT INTO jobs
+    (user_id, company, role, company_norm, role_norm, applied_date, status)
+  VALUES
+    ($1, $2, $3, $4, $5, $6, $7)
+  ON CONFLICT (user_id, company_norm, role_norm) DO NOTHING
+  RETURNING *
+  `,
+  [
+    userId,
+    companyClean,
+    roleClean || null,
+    companyNorm,
+    roleNorm || null,
+    appliedDate || null,
+    status || "Applied",
+  ]
+);
+
+if (inserted.rows.length > 0) {
+  return res.json({ ok: true, inserted: true, job: inserted.rows[0] });
+}
+const existing = await pool.query(
+  `
+  SELECT *
+  FROM jobs
+  WHERE user_id = $1
+    AND company_norm = $2
+    AND role_norm = $3
+  LIMIT 1
+  `,
+  [userId, companyNorm, roleNorm]
+);
+
+return res.json({ ok: true, inserted: false, job: existing.rows[0] || null });
   } catch (err) {
     console.error(err);
     res.status(500).json({ ok: false, error: err.message });
