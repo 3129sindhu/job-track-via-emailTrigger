@@ -40,12 +40,38 @@ router.post("/sync", verifyToken, async (req, res) => {
       const parsed = parseJobFromEmail({ subject, snippet });
       if (!parsed) continue;
 
-      await pool.query(
-        `INSERT INTO jobs (user_id, company, role, status)
-         VALUES ($1, $2, $3, 'Applied')`,
-        [userId, parsed.company, parsed.role]
-      );
+      function norm(s) {
+  return String(s || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+const companyClean = (company || "").trim();
+const roleClean = (role || "").trim();
 
+const companyNorm = norm(companyClean);
+const roleNorm = norm(roleClean);
+if (!companyClean || companyNorm === "unknown company") {
+  console.log("Skipping insert: company unknown", { subject, from });
+  return; 
+}
+      await pool.query(
+  `
+  INSERT INTO jobs
+    (user_id, company, role, company_norm, role_norm, applied_at)
+  VALUES
+    ($1, $2, $3, $4, $5, $6)
+  ON CONFLICT (user_id, company_norm, role_norm) DO NOTHING
+  `,
+  [
+    userId,
+    companyClean,
+    roleClean || null,
+    companyNorm,
+    roleNorm || null,
+    appliedAt
+  ]
+);
       inserted++;
     }
 

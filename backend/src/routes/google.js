@@ -33,23 +33,20 @@ router.get("/callback", async (req, res) => {
     console.log("refresh_token:", tokens.refresh_token);
 console.log("access_token:", !!tokens.access_token);
 
-    // Save tokens to DB
-    await pool.query(
+  
+await pool.query(
   `UPDATE users
-   SET google_refresh_token = $1,
+   SET google_refresh_token = COALESCE($1, google_refresh_token),
        google_access_token = $2,
        google_token_expiry = to_timestamp($3 / 1000.0)
    WHERE id = $4`,
-  [
-    tokens.refresh_token || null,
-    tokens.access_token || null,
-    tokens.expiry_date || null,
-    userId
-  ]
+  [tokens.refresh_token || null, tokens.access_token || null, tokens.expiry_date || null, userId]
 );
+  
 
-    res.send("Gmail connected successfully. You can close this tab.");
-  } catch (err) {
+res.redirect("http://localhost:5173/?gmail=connected");
+ 
+} catch (err) {
     console.error(err);
     res.status(500).send("OAuth failed: " + err.message);
   }

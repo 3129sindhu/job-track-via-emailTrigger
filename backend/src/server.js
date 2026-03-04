@@ -37,8 +37,8 @@ app.use(
 );
 
 app.use("/sync-runs", syncRunsRoute);
-app.use("/gmail", gmailRoute);
 app.use("/sync", syncRoute);
+app.use("/gmail", gmailRoute);
 app.use("/google", googleRoute);
 app.use("/auth", authRoute);
 app.use("/health", healthRoute);
